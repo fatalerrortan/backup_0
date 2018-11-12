@@ -42,11 +42,11 @@ class BV_Client(object):
         if os.path.isfile(BV_Client.converted_audio_path):
             os.remove(BV_Client.converted_audio_path)
         try:
-            convert_query = 'ffmpeg -i {} -ac 1 -c:a pcm_s16le -ar 8000 {}'.format(
+            convert_query = 'ffmpeg -i {} -ac 1 -c:a pcm_s16le -ar 8000 -loglevel panic {}'.format(
                 audio_path, BV_Client.converted_audio_path
             )
             print(">>>converting to WAV PCM 8 KHz, 16-bit Mono ")
-            subprocess.check_output(convert_query, shell=True)
+            subprocess.call(convert_query, shell=True)
             # os.system(convert_query)
             print(">>>converting is done ")
         except Exception as e:
@@ -263,7 +263,7 @@ if __name__ == '__main__':
     for audio in audio_files:
         # audio_path = os.path.abspath('audio\\'+audio)
         audio_path = os.path.abspath('audio/'+audio)
-        print('\r\n>>>!!!Working on audio \'{}\'!!!'.format(audio_path))
+        print('\r\n>>>!!!Working on audio >>>\'{}\'<<<!!!'.format(audio))
         participant_id = re.sub(r'_(?:0|1).m4a$', '', audio)
         study_log_path = os.path.abspath('study_logs/' + participant_id + '.json')
         bv_client = BV_Client(audio, audio_path, study_log_path).get_bv_analysis()
