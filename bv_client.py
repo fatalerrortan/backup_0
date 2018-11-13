@@ -7,22 +7,23 @@ import re
 import pandas
 from terminaltables import AsciiTable
 import datetime
+import platform
+
 
 class BV_Client(object):
 
     API_KEY = "API_KEY"
-    # API_SERVER_URL = "http://10.159.137.167/"
-    API_SERVER_URL = "http://192.168.31.190/"
-    # TOKEN_SERVER_URL = "http://10.159.137.167:9898/token"
-    TOKEN_SERVER_URL = "http://192.168.31.190:9898/token"
-    # csv_emotion_path = 'inc\\combined.csv'
-    csv_emotion_path = 'inc/combined.csv'
-    # converted_audio_path = 'tmp\\tmp_audio.wav'
-    converted_audio_path = 'tmp/tmp_audio.wav'
+    API_SERVER_URL = "http://10.159.137.167/"
+    # API_SERVER_URL = "http://192.168.31.190/"
+    TOKEN_SERVER_URL = "http://10.159.137.167:9898/token"
+    # TOKEN_SERVER_URL = "http://192.168.31.190:9898/token"
+    csv_emotion_path = 'inc\\combined.csv'
+    # csv_emotion_path = 'inc/combined.csv'
+    converted_audio_path = 'tmp\\tmp_audio.wav'
+    # converted_audio_path = 'tmp/tmp_audio.wav'
 
     def __init__(self, audio_name, audio_path, study_log_path):
         '''
-
         :param audio_path:
         :param study_log_path:
         '''
@@ -35,14 +36,15 @@ class BV_Client(object):
     @classmethod
     def audio_formatter(cls, audio_path):
         '''
-
         :param audio_path:
         :return:
         '''
         if os.path.isfile(BV_Client.converted_audio_path):
             os.remove(BV_Client.converted_audio_path)
         try:
-            convert_query = 'ffmpeg -i {} -ac 1 -c:a pcm_s16le -ar 8000 -loglevel panic {}'.format(
+            command = 'lib\\bin\\ffmpeg.exe -i {} -ac 1 -c:a pcm_s16le -ar 8000 -loglevel panic {}' \
+                if platform.system() == 'Windows' else 'ffmpeg -i {} -ac 1 -c:a pcm_s16le -ar 8000 -loglevel panic {}'
+            convert_query = command.format(
                 audio_path, BV_Client.converted_audio_path
             )
             print(">>>converting to WAV PCM 8 KHz, 16-bit Mono ")
@@ -50,11 +52,10 @@ class BV_Client(object):
             # os.system(convert_query)
             print(">>>converting is done ")
         except Exception as e:
-            raise Exception("format error: \r\n"+str(e))
+            raise Exception("format error: \r\n" + str(e))
 
     def get_bv_analysis(self, result=False):
         '''
-
         :param result:
         :return:
         '''
@@ -63,14 +64,14 @@ class BV_Client(object):
                             data={"grant_type": "client_credentials", "apiKey": BV_Client.API_KEY})
         token = res.json()['access_token']
         headers = {"Authorization": "Bearer " + token}
-        pp = requests.post(BV_Client.API_SERVER_URL+"v5/recording/start", json={"dataFormat": {"type": "WAV"}},
+        pp = requests.post(BV_Client.API_SERVER_URL + "v5/recording/start", json={"dataFormat": {"type": "WAV"}},
                            verify=False,
                            headers=headers)
         if pp.status_code != 200:
             raise Exception('unsuccessful connection: \r\n {} \r\n {}'.format(pp.status_code, pp.content))
         recording_id = pp.json()['recordingId']
         with open(BV_Client.converted_audio_path, 'rb') as wavdata:
-            r = requests.post(BV_Client.API_SERVER_URL+"v5/recording/" + recording_id, data=wavdata, verify=False,
+            r = requests.post(BV_Client.API_SERVER_URL + "v5/recording/" + recording_id, data=wavdata, verify=False,
                               headers=headers)
         self.bv_result = r.json()['result']['analysisSegments']
         if result:
@@ -87,7 +88,6 @@ class BV_Client(object):
     @staticmethod
     def get_emotion_csv_dict(emotion_csv_path, participant_id):
         '''
-
         :param emotion_csv_path:
         :param participant_id:
         :return:
@@ -97,28 +97,31 @@ class BV_Client(object):
             items = csv.reader(emotion_csv, delimiter=',')
             for item in items:
                 if str(item[0]).startswith(participant_id):
-                    key = re.sub(r'(?:_zoom_c555l|_smart_lav).*\.mp3$','',item[0])
-                    value = re.sub(r'[0-9]+','',item[1])
+                    key = re.sub(r'(?:_zoom_c555l|_smart_lav).*\.mp3$', '', item[0])
+                    value = re.sub(r'[0-9]+', '', item[1])
                     emotion_dict.update([(key, value)])
         return emotion_dict
 
     def get_mapping_evaluation(self):
         '''
-
         :return:
         '''
         print('>>>Beyond Verbal Result received, Working on Evaluation')
         matrix_result_dict = {
-            'Neutral': {'Neutral':0, 'Happiness/Enthusiasm/Friendliness':0, 'Sadness/Uncertainty/Boredom':0,
-                        'Warmth/Calmness':0, 'Anger/Dislike/Stress':0, 'Inexplicit emotion': 0},
-            'Happiness/Enthusiasm/Friendliness': {'Neutral': 0, 'Happiness/Enthusiasm/Friendliness': 0, 'Sadness/Uncertainty/Boredom': 0,
+            'Neutral': {'Neutral': 0, 'Happiness/Enthusiasm/Friendliness': 0, 'Sadness/Uncertainty/Boredom': 0,
                         'Warmth/Calmness': 0, 'Anger/Dislike/Stress': 0, 'Inexplicit emotion': 0},
-            'Sadness/Uncertainty/Boredom': {'Neutral': 0, 'Happiness/Enthusiasm/Friendliness': 0, 'Sadness/Uncertainty/Boredom': 0,
-                        'Warmth/Calmness': 0, 'Anger/Dislike/Stress': 0, 'Inexplicit emotion': 0},
+            'Happiness/Enthusiasm/Friendliness': {'Neutral': 0, 'Happiness/Enthusiasm/Friendliness': 0,
+                                                  'Sadness/Uncertainty/Boredom': 0,
+                                                  'Warmth/Calmness': 0, 'Anger/Dislike/Stress': 0,
+                                                  'Inexplicit emotion': 0},
+            'Sadness/Uncertainty/Boredom': {'Neutral': 0, 'Happiness/Enthusiasm/Friendliness': 0,
+                                            'Sadness/Uncertainty/Boredom': 0,
+                                            'Warmth/Calmness': 0, 'Anger/Dislike/Stress': 0, 'Inexplicit emotion': 0},
             'Warmth/Calmness': {'Neutral': 0, 'Happiness/Enthusiasm/Friendliness': 0, 'Sadness/Uncertainty/Boredom': 0,
-                        'Warmth/Calmness': 0, 'Anger/Dislike/Stress': 0, 'Inexplicit emotion': 0},
-            'Anger/Dislike/Stress': {'Neutral': 0, 'Happiness/Enthusiasm/Friendliness': 0, 'Sadness/Uncertainty/Boredom': 0,
-                        'Warmth/Calmness': 0, 'Anger/Dislike/Stress': 0, 'Inexplicit emotion': 0}
+                                'Warmth/Calmness': 0, 'Anger/Dislike/Stress': 0, 'Inexplicit emotion': 0},
+            'Anger/Dislike/Stress': {'Neutral': 0, 'Happiness/Enthusiasm/Friendliness': 0,
+                                     'Sadness/Uncertainty/Boredom': 0,
+                                     'Warmth/Calmness': 0, 'Anger/Dislike/Stress': 0, 'Inexplicit emotion': 0}
         }
 
         participant_id = self.study_log['participantID']
@@ -143,7 +146,6 @@ class BV_Client(object):
 
     def generate_result_table(self, matrix_result_dict):
         '''
-
         :param matrix_result_dict:
         :return:
         '''
@@ -158,21 +160,26 @@ class BV_Client(object):
         frustration_correct_rate = self.get_correct_rate('Sadness/Uncertainty/Boredom', frustration_result)
         relaxed_correct_rate = self.get_correct_rate('Warmth/Calmness', relaxed_result)
         angry_correct_rate = self.get_correct_rate('Anger/Dislike/Stress', angry_result)
-        sum_correct_rate = round((neutral_correct_rate[1] + happy_correct_rate[1] + frustration_correct_rate[1] + relaxed_correct_rate[1] + angry_correct_rate[1]) / 5, 4)
+        sum_correct_rate = round((neutral_correct_rate[1] + happy_correct_rate[1] + frustration_correct_rate[1] +
+                                  relaxed_correct_rate[1] + angry_correct_rate[1]) / 5, 4)
 
         table_data = [
-            ['BMW\\BV', 'neutral', 'happy / surprised', 'frustration / confused / bored', 'relaxed', 'angry', 'Not recognized', 'correct rate'],
+            ['BMW\\BV', 'neutral', 'happy / surprised', 'frustration / confused / bored', 'relaxed', 'angry',
+             'Not recognized', 'correct rate'],
             ['neutral', neutral_result['Neutral'], neutral_result['Happiness/Enthusiasm/Friendliness'],
-             neutral_result['Sadness/Uncertainty/Boredom'], neutral_result['Warmth/Calmness'], neutral_result['Anger/Dislike/Stress'],
+             neutral_result['Sadness/Uncertainty/Boredom'], neutral_result['Warmth/Calmness'],
+             neutral_result['Anger/Dislike/Stress'],
              neutral_result['Inexplicit emotion'], neutral_correct_rate[0]],
 
             ['happy / surprised', happy_result['Neutral'], happy_result['Happiness/Enthusiasm/Friendliness'],
              happy_result['Sadness/Uncertainty/Boredom'], happy_result['Warmth/Calmness'],
              happy_result['Anger/Dislike/Stress'], happy_result['Inexplicit emotion'], happy_correct_rate[0]],
 
-            ['frustration / confused / bored', frustration_result['Neutral'], frustration_result['Happiness/Enthusiasm/Friendliness'],
+            ['frustration / confused / bored', frustration_result['Neutral'],
+             frustration_result['Happiness/Enthusiasm/Friendliness'],
              frustration_result['Sadness/Uncertainty/Boredom'], frustration_result['Warmth/Calmness'],
-             frustration_result['Anger/Dislike/Stress'], frustration_result['Inexplicit emotion'], frustration_correct_rate[0]],
+             frustration_result['Anger/Dislike/Stress'], frustration_result['Inexplicit emotion'],
+             frustration_correct_rate[0]],
 
             ['relaxed', relaxed_result['Neutral'], relaxed_result['Happiness/Enthusiasm/Friendliness'],
              relaxed_result['Sadness/Uncertainty/Boredom'], relaxed_result['Warmth/Calmness'],
@@ -190,7 +197,6 @@ class BV_Client(object):
 
     def write_result(self, table):
         '''
-
         :param table:
         :return:
         '''
@@ -201,7 +207,6 @@ class BV_Client(object):
 
     def get_correct_rate(self, label, single_emotion_result):
         '''
-
         :param label:
         :param single_emotion_result:
         :return:
@@ -211,12 +216,12 @@ class BV_Client(object):
         if denominator == 0:
             # return (fraction, 0, 0)
             return ('labeled: {} | recognized: {} -> {}%'.format(denominator, fraction, 0), 0)
-        return ('labeled: {} | recognized: {} -> {}%'.format(denominator, fraction, round((fraction/denominator)*100, 4))
-                , round((fraction/denominator)*100, 4))
+        return (
+        'labeled: {} | recognized: {} -> {}%'.format(denominator, fraction, round((fraction / denominator) * 100, 4))
+        , round((fraction / denominator) * 100, 4))
 
     def get_mapping_and_counting(self, raw_expected_label):
         '''
-
         :param raw_expected_label:
         :return:
         '''
@@ -237,7 +242,6 @@ class BV_Client(object):
 
     def get_single_bv_segment_result(self, segment_start_offset, segment_end_offset):
         '''
-
         :param segment_start_offset:
         :param segment_end_offset:
         :return:
@@ -254,21 +258,41 @@ class BV_Client(object):
                 if sore > current_max_sore:
                     current_max_sore = sore
                     current_label = label
-                else: continue
+                else:
+                    continue
         return current_label
+
+def audio_length_validate(audio_path):
+    command_query = 'lib\\bin\\ffprobe.exe -show_entries format=duration -sexagesimal -loglevel panic -i {}'.format(audio_path)
+    raw_duration = subprocess.check_output(command_query, shell=True)
+    modi_raw_duration = re.sub(r'([\[/?FORMAT\]]+)|(duration=)','',raw_duration.decode()).replace('\r','').replace('\n', '')
+    hour = 0 if not re.search(r'^[0-9]+', modi_raw_duration) else int(re.search(r'^[0-9]+', modi_raw_duration).group())
+    minu = int(re.sub(r'(^[0-9]*:)|(:[.0-9]*$)', '', modi_raw_duration))
+    sec = float(re.search(r'[.0-9]*$', modi_raw_duration).group())
+
+    length_in_sec = (hour * (60^2)) + minu * 60 + sec
+    limit_in_sec = 33 * 60
+    if length_in_sec < limit_in_sec:
+        return (True, None)
+    return (False, length_in_sec)
 
 if __name__ == '__main__':
 
     audio_files = os.listdir(os.path.abspath('audio'))
     for audio in audio_files:
-        # audio_path = os.path.abspath('audio\\'+audio)
-        audio_path = os.path.abspath('audio/'+audio)
+        audio_path = os.path.abspath('audio\\'+audio)
+        # audio_path = os.path.abspath('audio/' + audio)
         print('\r\n>>>!!!Working on audio >>>\'{}\'<<<!!!'.format(audio))
         participant_id = re.sub(r'_(?:0|1).m4a$', '', audio)
         study_log_path = os.path.abspath('study_logs/' + participant_id + '.json')
-        bv_client = BV_Client(audio, audio_path, study_log_path).get_bv_analysis()
-        bv_client.get_mapping_evaluation()
-
-
-
-
+        if audio_length_validate(audio_path)[0]:
+            print('fit to server requirement')
+            # bv_client = BV_Client(audio, audio_path, study_log_path).get_bv_analysis()
+            # bv_client.get_mapping_evaluation()
+        else:
+            length_in_sec = audio_length_validate(audio_path)[1]
+            expected_segment_num = int(length_in_sec / (33 * 60)) + 1
+            print(expected_segment_num)
+            command_query = 'lib\\bin\\ffmpeg.exe -f segment -segment_time {} -loglevel panic -i {} -c copy test\\out_%_test.wav'\
+                .format(expected_segment_num, audio_path)
+            raw_duration = subprocess.check_output(command_query, shell=True)
