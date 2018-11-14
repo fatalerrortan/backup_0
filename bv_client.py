@@ -13,9 +13,9 @@ import platform
 class BV_Client(object):
 
     API_KEY = "API_KEY"
-    API_SERVER_URL = "http://10.159.137.167/"
+    API_SERVER_URL = "http://10.159.137.171/"
     # API_SERVER_URL = "http://192.168.31.190/"
-    TOKEN_SERVER_URL = "http://10.159.137.167:9898/token"
+    TOKEN_SERVER_URL = "http://10.159.137.171:9898/token"
     # TOKEN_SERVER_URL = "http://192.168.31.190:9898/token"
     csv_emotion_path = 'inc\\combined.csv'
     # csv_emotion_path = 'inc/combined.csv'
@@ -47,10 +47,10 @@ class BV_Client(object):
             convert_query = command.format(
                 audio_path, BV_Client.converted_audio_path
             )
-            print(">>>converting to WAV PCM 8 KHz, 16-bit Mono ")
+            print("   >>>converting to WAV PCM 8 KHz, 16-bit Mono ")
             subprocess.call(convert_query, shell=True)
             # os.system(convert_query)
-            print(">>>converting is done ")
+            print("   >>>converting is done ")
         except Exception as e:
             raise Exception("format error: \r\n" + str(e))
 
@@ -59,7 +59,7 @@ class BV_Client(object):
         :param result:
         :return:
         '''
-        print(">>>waiting for server result")
+        print("   >>>waiting for server result")
         res = requests.post(BV_Client.TOKEN_SERVER_URL,
                             data={"grant_type": "client_credentials", "apiKey": BV_Client.API_KEY})
         token = res.json()['access_token']
@@ -74,6 +74,11 @@ class BV_Client(object):
             r = requests.post(BV_Client.API_SERVER_URL + "v5/recording/" + recording_id, data=wavdata, verify=False,
                               headers=headers)
         self.bv_result = r.json()['result']['analysisSegments']
+
+        # with open('test.log', 'a') as f:
+        #     f.write(str(r.json()))
+        #     f.write('\r\n')
+
         if result:
             return r.json()
         else:
@@ -102,11 +107,14 @@ class BV_Client(object):
                     emotion_dict.update([(key, value)])
         return emotion_dict
 
-    def get_mapping_evaluation(self):
+    def get_mapping_evaluation(self, is_segmented = False, **segment_info):
         '''
+
+        :param is_segmented:
+        :param segment_info:
         :return:
         '''
-        print('>>>Beyond Verbal Result received, Working on Evaluation')
+        print('   >>>Beyond Verbal Result received, Working on Evaluation')
         matrix_result_dict = {
             'Neutral': {'Neutral': 0, 'Happiness/Enthusiasm/Friendliness': 0, 'Sadness/Uncertainty/Boredom': 0,
                         'Warmth/Calmness': 0, 'Anger/Dislike/Stress': 0, 'Inexplicit emotion': 0},
@@ -123,12 +131,21 @@ class BV_Client(object):
                                      'Sadness/Uncertainty/Boredom': 0,
                                      'Warmth/Calmness': 0, 'Anger/Dislike/Stress': 0, 'Inexplicit emotion': 0}
         }
-
         participant_id = self.study_log['participantID']
         test_start_time = pandas.to_datetime(self.study_log['recordings'][0]['start'], unit='ms')
         study_audio_segments = self.study_log['prompts']
 
-        for segment in study_audio_segments:
+        init_start_time = None
+        init_end_time = None
+        if is_segmented:
+            init_offset_index = segment_info.get('init_offset_index')
+            init_start_time = segment_info.get('init_start_time')
+            init_end_time = segment_info.get('init_end_time')
+            study_audio_segments = study_audio_segments[init_offset_index:]
+            print("length:" + str(len(study_audio_segments)))
+            print('!!!current window: ' + str((init_offset_index, init_start_time, init_end_time)))
+
+        for index, segment in enumerate(study_audio_segments):
             prompt_id = participant_id + '_' + segment['promptID']
             expected_emotion = self.emotion_dict.get(prompt_id, None)
             if not expected_emotion:
@@ -139,10 +156,19 @@ class BV_Client(object):
             segment_start_offset = int((segment_start_time - test_start_time).seconds) * 1000
             segment_end_time = pandas.to_datetime(segment['end'], unit='ms')
             segment_end_offset = int((segment_end_time - test_start_time).seconds) * 1000
-            bv_label = self.get_single_bv_segment_result(segment_start_offset, segment_end_offset)
+
+
+            print('!!!BMW: ' + str((segment_start_offset, segment_end_offset)))
+
+            if init_end_time and (segment_start_offset >= init_end_time):
+                self.generate_result_table(matrix_result_dict)
+                print("break point:" + str(segment_start_offset))
+                return index
+
+            bv_label = self.get_single_bv_segment_result(segment_start_offset, segment_end_offset, init_start_time)
             matrix_result_dict[expected_emotion][bv_label] = matrix_result_dict[expected_emotion][bv_label] + 1
-        print('>>>Generating result table')
-        return self.generate_result_table(matrix_result_dict)
+        print('   >>>Generating result table')
+        self.generate_result_table(matrix_result_dict)
 
     def generate_result_table(self, matrix_result_dict):
         '''
@@ -240,17 +266,19 @@ class BV_Client(object):
         else:
             raise Exception("no mapping available")
 
-    def get_single_bv_segment_result(self, segment_start_offset, segment_end_offset):
+    def get_single_bv_segment_result(self, segment_start_offset, segment_end_offset, init_start_time):
         '''
+
         :param segment_start_offset:
         :param segment_end_offset:
+        :param init_start_time:
         :return:
         '''
         current_max_sore = 0
         current_label = 'Inexplicit emotion'
         for segment in self.bv_result:
-            offset = segment['offset']
-            end = segment['end']
+            offset = segment['offset'] + init_start_time
+            end = segment['end'] + init_start_time
             if segment_start_offset >= offset and segment_end_offset <= end:
                 label = segment['analysis']['Emotion_group']['Group']
                 # if label == 'Inexplicit emotion': continue
@@ -262,37 +290,60 @@ class BV_Client(object):
                     continue
         return current_label
 
-def audio_length_validate(audio_path):
-    command_query = 'lib\\bin\\ffprobe.exe -show_entries format=duration -sexagesimal -loglevel panic -i {}'.format(audio_path)
+def audio_length_validate(audio_path, just_len=False):
+    command = 'lib\\bin\\ffprobe.exe -show_entries format=duration -sexagesimal -loglevel panic -i {}' \
+        if platform.system() == "Windows" else 'ffprobe -show_entries format=duration -sexagesimal -loglevel panic -i {}'
+    command_query = command.format(audio_path)
     raw_duration = subprocess.check_output(command_query, shell=True)
     modi_raw_duration = re.sub(r'([\[/?FORMAT\]]+)|(duration=)','',raw_duration.decode()).replace('\r','').replace('\n', '')
     hour = 0 if not re.search(r'^[0-9]+', modi_raw_duration) else int(re.search(r'^[0-9]+', modi_raw_duration).group())
     minu = int(re.sub(r'(^[0-9]*:)|(:[.0-9]*$)', '', modi_raw_duration))
     sec = float(re.search(r'[.0-9]*$', modi_raw_duration).group())
-
     length_in_sec = (hour * (60^2)) + minu * 60 + sec
+    if just_len:
+        return length_in_sec * 1000
     limit_in_sec = 33 * 60
     if length_in_sec < limit_in_sec:
-        return (True, None)
-    return (False, length_in_sec)
+        return True
+    return False
 
 if __name__ == '__main__':
 
     audio_files = os.listdir(os.path.abspath('audio'))
     for audio in audio_files:
-        audio_path = os.path.abspath('audio\\'+audio)
+        audio_path = os.path.abspath('audio\\'+audio) if platform.system() == 'Windows' else os.path.abspath('audio/'+audio)
         # audio_path = os.path.abspath('audio/' + audio)
         print('\r\n>>>!!!Working on audio >>>\'{}\'<<<!!!'.format(audio))
-        participant_id = re.sub(r'_(?:0|1).m4a$', '', audio)
+        participant_id = re.sub(r'_[0-9].m4a$', '', audio)
         study_log_path = os.path.abspath('study_logs/' + participant_id + '.json')
-        if audio_length_validate(audio_path)[0]:
-            print('fit to server requirement')
-            # bv_client = BV_Client(audio, audio_path, study_log_path).get_bv_analysis()
-            # bv_client.get_mapping_evaluation()
+        if audio_length_validate(audio_path):
+            bv_client = BV_Client(audio, audio_path, study_log_path).get_bv_analysis()
+            bv_client.get_mapping_evaluation()
         else:
-            length_in_sec = audio_length_validate(audio_path)[1]
-            expected_segment_num = int(length_in_sec / (33 * 60)) + 1
-            print(expected_segment_num)
-            command_query = 'lib\\bin\\ffmpeg.exe -f segment -segment_time {} -loglevel panic -i {} -c copy test\\out_%_test.wav'\
-                .format(expected_segment_num, audio_path)
+            print('   >>>{} is being split into 20 min. long segments'.format(audio))
+            command = 'lib\\bin\\ffmpeg.exe -i {} -c copy -map 0 -loglevel panic -segment_time 1200 -f segment tmp\\segments_tmp\\{}_%01d.m4a' \
+                if platform.system() == 'Windows' else 'ffmpeg -i {} -c copy -map 0 -loglevel panic -segment_time 1200 -f segment tmp/segments_tmp/{}_%01d.m4a'
+            command_query = command.format(audio_path, participant_id)
             raw_duration = subprocess.check_output(command_query, shell=True)
+            segmented_audio_files = os.listdir(os.path.abspath('tmp\\segments_tmp')) \
+                if platform.system() == 'Windows' else os.listdir(os.path.abspath('tmp/segments_tmp'))
+
+            init_offset_index = 0
+            init_start_time = 0
+            init_end_time = 0
+
+            for segmented_audio in segmented_audio_files:
+                print('   >>>!!!working on segment {} of {}!!!'.format(segmented_audio,audio))
+                segmented_audio_path = os.path.abspath('tmp\\segments_tmp\\' + segmented_audio) if platform.system() == 'Windows' else os.path.abspath(
+                    'tmp/segments_tmp/' + segmented_audio)
+
+                init_end_time = init_end_time + audio_length_validate(segmented_audio_path, just_len=True)
+
+                bv_client = BV_Client(segmented_audio, segmented_audio_path, study_log_path).get_bv_analysis()
+                incremented_index = bv_client.get_mapping_evaluation(is_segmented = True, init_offset_index=init_offset_index,
+                                                               init_start_time=init_start_time, init_end_time=init_end_time)
+                if incremented_index:
+                    init_offset_index = init_offset_index + incremented_index
+
+                init_start_time = init_end_time
+                os.remove(segmented_audio_path)
