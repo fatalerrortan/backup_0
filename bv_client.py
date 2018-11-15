@@ -154,16 +154,21 @@ class BV_Client(object):
             segment_start_offset = int((segment_start_time - test_start_time).seconds) * 1000
             segment_end_time = pandas.to_datetime(segment['end'], unit='ms')
             segment_end_offset = int((segment_end_time - test_start_time).seconds) * 1000
-            if init_end_time and (segment_start_offset >= init_end_time):
-                self.generate_result_table(matrix_result_dict)
-                return index
+
+            # print("compare {} and {}".format(segment_start_offset, init_end_time))
+
+            if (is_segmented and (segment_start_offset >= init_end_time)) \
+                    or \
+                    (is_segmented and (index == len(study_audio_segments)-1)):
+                part_data_of_table = self.generate_result_table(matrix_result_dict, is_segmented=True)
+                return (index, part_data_of_table)
 
             bv_label = self.get_single_bv_segment_result(segment_start_offset, segment_end_offset, init_start_time)
             matrix_result_dict[expected_emotion][bv_label] = matrix_result_dict[expected_emotion][bv_label] + 1
         print('   >>>Generating result table')
         self.generate_result_table(matrix_result_dict)
 
-    def generate_result_table(self, matrix_result_dict):
+    def generate_result_table(self, matrix_result_dict, is_segmented=False, **extra_data):
         '''
         :param matrix_result_dict:
         :return:
@@ -173,6 +178,16 @@ class BV_Client(object):
         frustration_result = matrix_result_dict['Sadness/Uncertainty/Boredom']
         relaxed_result = matrix_result_dict['Warmth/Calmness']
         angry_result = matrix_result_dict['Anger/Dislike/Stress']
+
+        if is_segmented:
+            return {
+                'neutral_result': neutral_result,
+                'happy_result': happy_result,
+                'frustration_result': frustration_result,
+                'relaxed_result': relaxed_result,
+                'angry_result': angry_result
+            }
+
         # miss_result = matrix_result_dict['Inexplicit emotion']
         neutral_correct_rate = self.get_correct_rate('Neutral', neutral_result)
         happy_correct_rate = self.get_correct_rate('Happiness/Enthusiasm/Friendliness', happy_result)
@@ -234,10 +249,10 @@ class BV_Client(object):
         denominator = sum(single_emotion_result.values())
         if denominator == 0:
             # return (fraction, 0, 0)
-            return ('labeled: {} | recognized: {} -> {}%'.format(denominator, fraction, 0), 0)
+            return ('labeled: {} | recognized: {} | -> {}%'.format(denominator, fraction, 0), 0)
         return (
-        'labeled: {} | recognized: {} -> {}%'.format(denominator, fraction, round((fraction / denominator) * 100, 4))
-        , round((fraction / denominator) * 100, 4))
+        'labeled: {} | recognized: {} -> | {}%'.format(denominator, fraction, round((fraction / denominator) * 100, 2))
+        , round((fraction / denominator) * 100, 2))
 
     def get_mapping_and_counting(self, raw_expected_label):
         '''
@@ -325,6 +340,8 @@ if __name__ == '__main__':
             init_start_time = 0
             init_end_time = 0
 
+            incremented_table_data = None
+
             for segmented_audio in segmented_audio_files:
                 segmented_audio_path = os.path.abspath('tmp\\segments_tmp\\' + segmented_audio) if platform.system() == 'Windows' else os.path.abspath(
                     'tmp/segments_tmp/' + segmented_audio)
@@ -333,10 +350,29 @@ if __name__ == '__main__':
                 print('   >>>!!!working on segment {} ({} to {} Min.)of {}!!!'.
                       format(segmented_audio, round(init_start_time/1000/60, 2), round(init_end_time/1000/60, 2), audio))
                 bv_client = BV_Client(segmented_audio, segmented_audio_path, study_log_path).get_bv_analysis()
-                incremented_index = bv_client.get_mapping_evaluation(is_segmented = True, init_offset_index=init_offset_index,
+                incremented_index, part_of_table_data = bv_client.get_mapping_evaluation(is_segmented = True, init_offset_index=init_offset_index,
                                                                init_start_time=init_start_time, init_end_time=init_end_time)
+
                 if incremented_index:
                     init_offset_index = init_offset_index + incremented_index
 
+                if not incremented_table_data:
+                    print('init value')
+                    incremented_table_data = part_of_table_data
+                else:
+                    print('merging')
+                    for label, results in part_of_table_data.items():
+                        print('outer')
+                        print((label, results))
+                        for emotion, value in incremented_table_data[label].items():
+                            prev_value = incremented_table_data[label][emotion]
+                            incremented_value = part_of_table_data[label][emotion]
+                            print((prev_value, incremented_value))
+                            incremented_table_data[label][emotion] = prev_value + incremented_value
+                            print(incremented_table_data[label][emotion])
+                # print(incremented_table_data)
+
                 init_start_time = init_end_time
                 os.remove(segmented_audio_path)
+
+            # print(incremented_table_data)
