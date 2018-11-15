@@ -8,14 +8,14 @@ import pandas
 from terminaltables import AsciiTable
 import datetime
 import platform
-
+import socket
 
 class BV_Client(object):
 
     API_KEY = "API_KEY"
-    API_SERVER_URL = "http://10.159.137.171/"
+    API_SERVER_URL = "http://10.159.137.56/"
     # API_SERVER_URL = "http://192.168.31.190/"
-    TOKEN_SERVER_URL = "http://10.159.137.171:9898/token"
+    TOKEN_SERVER_URL = "http://10.159.137.56:9898/token"
     # TOKEN_SERVER_URL = "http://192.168.31.190:9898/token"
     csv_emotion_path = 'inc\\combined.csv'
     # csv_emotion_path = 'inc/combined.csv'
@@ -135,15 +135,13 @@ class BV_Client(object):
         test_start_time = pandas.to_datetime(self.study_log['recordings'][0]['start'], unit='ms')
         study_audio_segments = self.study_log['prompts']
 
-        init_start_time = None
-        init_end_time = None
+        init_start_time = 0
+        init_end_time = 0
         if is_segmented:
             init_offset_index = segment_info.get('init_offset_index')
             init_start_time = segment_info.get('init_start_time')
             init_end_time = segment_info.get('init_end_time')
             study_audio_segments = study_audio_segments[init_offset_index:]
-            print("length:" + str(len(study_audio_segments)))
-            print('!!!current window: ' + str((init_offset_index, init_start_time, init_end_time)))
 
         for index, segment in enumerate(study_audio_segments):
             prompt_id = participant_id + '_' + segment['promptID']
@@ -156,13 +154,8 @@ class BV_Client(object):
             segment_start_offset = int((segment_start_time - test_start_time).seconds) * 1000
             segment_end_time = pandas.to_datetime(segment['end'], unit='ms')
             segment_end_offset = int((segment_end_time - test_start_time).seconds) * 1000
-
-
-            print('!!!BMW: ' + str((segment_start_offset, segment_end_offset)))
-
             if init_end_time and (segment_start_offset >= init_end_time):
                 self.generate_result_table(matrix_result_dict)
-                print("break point:" + str(segment_start_offset))
                 return index
 
             bv_label = self.get_single_bv_segment_result(segment_start_offset, segment_end_offset, init_start_time)
@@ -187,7 +180,7 @@ class BV_Client(object):
         relaxed_correct_rate = self.get_correct_rate('Warmth/Calmness', relaxed_result)
         angry_correct_rate = self.get_correct_rate('Anger/Dislike/Stress', angry_result)
         sum_correct_rate = round((neutral_correct_rate[1] + happy_correct_rate[1] + frustration_correct_rate[1] +
-                                  relaxed_correct_rate[1] + angry_correct_rate[1]) / 5, 4)
+                                  relaxed_correct_rate[1] + angry_correct_rate[1]) / 5, 2)
 
         table_data = [
             ['BMW\\BV', 'neutral', 'happy / surprised', 'frustration / confused / bored', 'relaxed', 'angry',
@@ -333,12 +326,12 @@ if __name__ == '__main__':
             init_end_time = 0
 
             for segmented_audio in segmented_audio_files:
-                print('   >>>!!!working on segment {} of {}!!!'.format(segmented_audio,audio))
                 segmented_audio_path = os.path.abspath('tmp\\segments_tmp\\' + segmented_audio) if platform.system() == 'Windows' else os.path.abspath(
                     'tmp/segments_tmp/' + segmented_audio)
 
                 init_end_time = init_end_time + audio_length_validate(segmented_audio_path, just_len=True)
-
+                print('   >>>!!!working on segment {} ({} to {} Min.)of {}!!!'.
+                      format(segmented_audio, round(init_start_time/1000/60, 2), round(init_end_time/1000/60, 2), audio))
                 bv_client = BV_Client(segmented_audio, segmented_audio_path, study_log_path).get_bv_analysis()
                 incremented_index = bv_client.get_mapping_evaluation(is_segmented = True, init_offset_index=init_offset_index,
                                                                init_start_time=init_start_time, init_end_time=init_end_time)
