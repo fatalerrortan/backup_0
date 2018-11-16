@@ -13,9 +13,9 @@ import socket
 class BV_Client(object):
 
     API_KEY = "API_KEY"
-    API_SERVER_URL = "http://10.159.137.56/"
+    API_SERVER_URL = "http://10.159.137.189/"
     # API_SERVER_URL = "http://192.168.31.190/"
-    TOKEN_SERVER_URL = "http://10.159.137.56:9898/token"
+    TOKEN_SERVER_URL = "http://10.159.137.189:9898/token"
     # TOKEN_SERVER_URL = "http://192.168.31.190:9898/token"
     csv_emotion_path = 'inc\\combined.csv'
     # csv_emotion_path = 'inc/combined.csv'
@@ -160,33 +160,24 @@ class BV_Client(object):
             if (is_segmented and (segment_start_offset >= init_end_time)) \
                     or \
                     (is_segmented and (index == len(study_audio_segments)-1)):
-                part_data_of_table = self.generate_result_table(matrix_result_dict, is_segmented=True)
-                return (index, part_data_of_table)
+                result_dict = self.generate_result_table(matrix_result_dict, is_segmented=True)
+                return (index, result_dict['part_data'], result_dict['part_table'])
 
             bv_label = self.get_single_bv_segment_result(segment_start_offset, segment_end_offset, init_start_time)
             matrix_result_dict[expected_emotion][bv_label] = matrix_result_dict[expected_emotion][bv_label] + 1
         print('   >>>Generating result table')
         self.generate_result_table(matrix_result_dict)
 
-    def generate_result_table(self, matrix_result_dict, is_segmented=False, **extra_data):
+    def generate_result_table(self, matrix_result_dict, is_segmented=False, extern_writer=False):
         '''
         :param matrix_result_dict:
         :return:
         '''
-        neutral_result = matrix_result_dict['Neutral']
-        happy_result = matrix_result_dict['Happiness/Enthusiasm/Friendliness']
-        frustration_result = matrix_result_dict['Sadness/Uncertainty/Boredom']
-        relaxed_result = matrix_result_dict['Warmth/Calmness']
-        angry_result = matrix_result_dict['Anger/Dislike/Stress']
-
-        if is_segmented:
-            return {
-                'neutral_result': neutral_result,
-                'happy_result': happy_result,
-                'frustration_result': frustration_result,
-                'relaxed_result': relaxed_result,
-                'angry_result': angry_result
-            }
+        neutral_result = matrix_result_dict['Neutral'] if not extern_writer else matrix_result_dict['neutral_result']
+        happy_result = matrix_result_dict['Happiness/Enthusiasm/Friendliness'] if not extern_writer else matrix_result_dict['happy_result']
+        frustration_result = matrix_result_dict['Sadness/Uncertainty/Boredom'] if not extern_writer else matrix_result_dict['frustration_result']
+        relaxed_result = matrix_result_dict['Warmth/Calmness'] if not extern_writer else matrix_result_dict['relaxed_result']
+        angry_result = matrix_result_dict['Anger/Dislike/Stress'] if not extern_writer else matrix_result_dict['angry_result']
 
         # miss_result = matrix_result_dict['Inexplicit emotion']
         neutral_correct_rate = self.get_correct_rate('Neutral', neutral_result)
@@ -226,7 +217,22 @@ class BV_Client(object):
             ['---', '---', '---', '---', '---', '---', '---', '>>>sum correct rate: {}%<<<'.format(sum_correct_rate)]
         ]
         table = AsciiTable(table_data)
+
+        if is_segmented:
+            return {
+                'part_table': table.table,
+                'part_data': {
+                    'neutral_result': neutral_result,
+                    'happy_result': happy_result,
+                    'frustration_result': frustration_result,
+                    'relaxed_result': relaxed_result,
+                    'angry_result': angry_result
+                    }
+                }
+
         print(table.table)
+        if extern_writer:
+            return table.table
         return self.write_result(table.table)
 
     def write_result(self, table):
@@ -236,7 +242,7 @@ class BV_Client(object):
         '''
         created_in = datetime.datetime.now()
         f = open('result/{}.txt'.format(self.audio_name), 'w+')
-        f.write('--- result for {} generated in {} ---\r\n\r\n'.format(self.audio_name, created_in))
+        f.write('--- result for {} generated in {} ---\r\n'.format(self.audio_name, created_in))
         f.write(table)
 
     def get_correct_rate(self, label, single_emotion_result):
@@ -299,6 +305,12 @@ class BV_Client(object):
         return current_label
 
 def audio_length_validate(audio_path, just_len=False):
+    '''
+
+    :param audio_path:
+    :param just_len:
+    :return:
+    '''
     command = 'lib\\bin\\ffprobe.exe -show_entries format=duration -sexagesimal -loglevel panic -i {}' \
         if platform.system() == "Windows" else 'ffprobe -show_entries format=duration -sexagesimal -loglevel panic -i {}'
     command_query = command.format(audio_path)
@@ -315,6 +327,8 @@ def audio_length_validate(audio_path, just_len=False):
         return True
     return False
 
+
+
 if __name__ == '__main__':
 
     audio_files = os.listdir(os.path.abspath('audio'))
@@ -329,7 +343,7 @@ if __name__ == '__main__':
             bv_client.get_mapping_evaluation()
         else:
             print('   >>>{} is being split into 20 min. long segments'.format(audio))
-            command = 'lib\\bin\\ffmpeg.exe -i {} -c copy -map 0 -loglevel panic -segment_time 1200 -f segment tmp\\segments_tmp\\{}_%01d.m4a' \
+            command = 'lib\\bin\\ffmpeg.exe -i {} -c copy -map 0 -loglevel panic -segment_time 1200 -f segment tmp\\segments_tmp\\{}_part_%01d.m4a' \
                 if platform.system() == 'Windows' else 'ffmpeg -i {} -c copy -map 0 -loglevel panic -segment_time 1200 -f segment tmp/segments_tmp/{}_%01d.m4a'
             command_query = command.format(audio_path, participant_id)
             raw_duration = subprocess.check_output(command_query, shell=True)
@@ -340,39 +354,48 @@ if __name__ == '__main__':
             init_start_time = 0
             init_end_time = 0
 
-            incremented_table_data = None
+            target_result_path = 'result\\{}.txt'.format(audio) if platform.system() == 'Windows' else 'result/{}.txt'.format(audio)
+            if os.path.isfile(target_result_path):
+                os.remove(target_result_path)
+            f = open(target_result_path, 'a+')
+            created_in = datetime.datetime.now()
+            f.write('--- result for {} generated in {} ---\r\n'.format(audio, created_in))
 
-            for segmented_audio in segmented_audio_files:
+
+            incremented_table_data = None
+            last_loop_index = len(segmented_audio_files) - 1
+            for index, segmented_audio in enumerate(segmented_audio_files):
                 segmented_audio_path = os.path.abspath('tmp\\segments_tmp\\' + segmented_audio) if platform.system() == 'Windows' else os.path.abspath(
                     'tmp/segments_tmp/' + segmented_audio)
 
                 init_end_time = init_end_time + audio_length_validate(segmented_audio_path, just_len=True)
                 print('   >>>!!!working on segment {} ({} to {} Min.)of {}!!!'.
                       format(segmented_audio, round(init_start_time/1000/60, 2), round(init_end_time/1000/60, 2), audio))
+                f.write('\r\n   >>>!!!Result for segment {} ({} to {} Min.)of {}!!!\r\n'
+                        .format(segmented_audio, round(init_start_time/1000/60, 2), round(init_end_time/1000/60, 2), audio))
                 bv_client = BV_Client(segmented_audio, segmented_audio_path, study_log_path).get_bv_analysis()
-                incremented_index, part_of_table_data = bv_client.get_mapping_evaluation(is_segmented = True, init_offset_index=init_offset_index,
+                incremented_index, part_data, part_table = bv_client.get_mapping_evaluation(is_segmented=True, init_offset_index=init_offset_index,
                                                                init_start_time=init_start_time, init_end_time=init_end_time)
-
+                f.write(part_table)
+                print(part_table)
                 if incremented_index:
                     init_offset_index = init_offset_index + incremented_index
 
                 if not incremented_table_data:
-                    print('init value')
-                    incremented_table_data = part_of_table_data
+                    incremented_table_data = part_data
                 else:
-                    print('merging')
-                    for label, results in part_of_table_data.items():
-                        print('outer')
-                        print((label, results))
+                    for label, results in part_data.items():
                         for emotion, value in incremented_table_data[label].items():
                             prev_value = incremented_table_data[label][emotion]
-                            incremented_value = part_of_table_data[label][emotion]
-                            print((prev_value, incremented_value))
+                            incremented_value = part_data[label][emotion]
                             incremented_table_data[label][emotion] = prev_value + incremented_value
-                            print(incremented_table_data[label][emotion])
-                # print(incremented_table_data)
 
                 init_start_time = init_end_time
                 os.remove(segmented_audio_path)
 
-            # print(incremented_table_data)
+                if last_loop_index == index:
+                    print('   >>> Combined Result for {} <<<'.format(audio))
+                    combined_table = bv_client.generate_result_table(incremented_table_data, extern_writer=True)
+                    f.write('\r\n   >>>!!!Combined Result for {}!!!\r\n'.format(audio))
+                    f.write(combined_table)
+                    f.close()
