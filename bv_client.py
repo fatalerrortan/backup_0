@@ -156,11 +156,16 @@ class BV_Client(object):
             segment_end_offset = int((segment_end_time - test_start_time).seconds) * 1000
 
             # print("compare {} and {}".format(segment_start_offset, init_end_time))
+            print('is Segment: {}'.format(is_segmented))
+            print((segment_start_offset, init_end_time))
+            print('length: {}'.format(len(study_audio_segments)))
+            print((index, len(study_audio_segments)-1))
 
             if (is_segmented and (segment_start_offset >= init_end_time)) \
                     or \
                     (is_segmented and (index == len(study_audio_segments)-1)):
                 result_dict = self.generate_result_table(matrix_result_dict, is_segmented=True)
+                print('in block')
                 return (index, result_dict['part_data'], result_dict['part_table'])
 
             bv_label = self.get_single_bv_segment_result(segment_start_offset, segment_end_offset, init_start_time)
@@ -319,7 +324,7 @@ def audio_length_validate(audio_path, just_len=False):
     hour = 0 if not re.search(r'^[0-9]+', modi_raw_duration) else int(re.search(r'^[0-9]+', modi_raw_duration).group())
     minu = int(re.sub(r'(^[0-9]*:)|(:[.0-9]*$)', '', modi_raw_duration))
     sec = float(re.search(r'[.0-9]*$', modi_raw_duration).group())
-    length_in_sec = (hour * (60^2)) + minu * 60 + sec
+    length_in_sec = (hour * 60 * 60) + minu * 60 + sec
     if just_len:
         return length_in_sec * 1000
     limit_in_sec = 33 * 60
@@ -343,7 +348,7 @@ if __name__ == '__main__':
             bv_client.get_mapping_evaluation()
         else:
             print('   >>>{} is being split into 20 min. long segments'.format(audio))
-            command = 'lib\\bin\\ffmpeg.exe -i {} -c copy -map 0 -loglevel panic -segment_time 1200 -f segment tmp\\segments_tmp\\{}_part_%01d.m4a' \
+            command = 'lib\\bin\\ffmpeg.exe -i {} -c copy -map 0 -loglevel panic -segment_time 1200 -f segment tmp\\segments_tmp\\{}_part_%03d.m4a' \
                 if platform.system() == 'Windows' else 'ffmpeg -i {} -c copy -map 0 -loglevel panic -segment_time 1200 -f segment tmp/segments_tmp/{}_%01d.m4a'
             command_query = command.format(audio_path, participant_id)
             raw_duration = subprocess.check_output(command_query, shell=True)
