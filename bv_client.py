@@ -8,19 +8,20 @@ import pandas
 from terminaltables import AsciiTable
 import datetime
 import platform
-import socket
+import fnmatch
+import sys
+import shutil
 
 class BV_Client(object):
 
     API_KEY = "API_KEY"
-    API_SERVER_URL = "http://10.159.137.189/"
+    API_SERVER_URL = "http://10.159.137.165/"
     # API_SERVER_URL = "http://192.168.31.190/"
-    TOKEN_SERVER_URL = "http://10.159.137.189:9898/token"
+    TOKEN_SERVER_URL = "http://10.159.137.165:9898/token"
     # TOKEN_SERVER_URL = "http://192.168.31.190:9898/token"
-    csv_emotion_path = 'inc\\combined.csv'
-    # csv_emotion_path = 'inc/combined.csv'
-    converted_audio_path = 'tmp\\tmp_audio.wav'
-    # converted_audio_path = 'tmp/tmp_audio.wav'
+    csv_emotion_path = 'inc\\combined.csv' if platform.system() == 'Windows' else 'inc/combined.csv'
+    converted_audio_path = 'tmp\\tmp_audio.wav' if platform.system() == 'Windows' else 'tmp/tmp_audio.wav'
+    converted_segmented_audios_path = 'tmp\\segments_tmp' if platform.system() == 'Windows' else 'tmp/segments_tmp'
 
     def __init__(self, audio_name, audio_path, study_log_path):
         '''
@@ -78,6 +79,10 @@ class BV_Client(object):
         # with open('test.log', 'a') as f:
         #     f.write(str(r.json()))
         #     f.write('\r\n')
+        try:
+            os.remove(BV_Client.converted_audio_path)
+        except Exception as e:
+            print('   >>>cannot remove the temporary audio.:\r\n{}'.format(e))
 
         if result:
             return r.json()
@@ -146,8 +151,9 @@ class BV_Client(object):
         for index, segment in enumerate(study_audio_segments):
             prompt_id = participant_id + '_' + segment['promptID']
             expected_emotion = self.emotion_dict.get(prompt_id, None)
-            if not expected_emotion:
-                continue
+            if not expected_emotion :
+                if not (index == len(study_audio_segments)-1):
+                    continue
             else:
                 expected_emotion = self.get_mapping_and_counting(expected_emotion)
             segment_start_time = pandas.to_datetime(segment['start'], unit='ms')
@@ -155,21 +161,17 @@ class BV_Client(object):
             segment_end_time = pandas.to_datetime(segment['end'], unit='ms')
             segment_end_offset = int((segment_end_time - test_start_time).seconds) * 1000
 
-            # print("compare {} and {}".format(segment_start_offset, init_end_time))
-            print('is Segment: {}'.format(is_segmented))
-            print((segment_start_offset, init_end_time))
-            print('length: {}'.format(len(study_audio_segments)))
-            print((index, len(study_audio_segments)-1))
-
             if (is_segmented and (segment_start_offset >= init_end_time)) \
                     or \
                     (is_segmented and (index == len(study_audio_segments)-1)):
                 result_dict = self.generate_result_table(matrix_result_dict, is_segmented=True)
-                print('in block')
+                # print('in block')
                 return (index, result_dict['part_data'], result_dict['part_table'])
 
             bv_label = self.get_single_bv_segment_result(segment_start_offset, segment_end_offset, init_start_time)
-            matrix_result_dict[expected_emotion][bv_label] = matrix_result_dict[expected_emotion][bv_label] + 1
+            if expected_emotion:
+                matrix_result_dict[expected_emotion][bv_label] = matrix_result_dict[expected_emotion][bv_label] + 1
+
         print('   >>>Generating result table')
         self.generate_result_table(matrix_result_dict)
 
@@ -332,8 +334,6 @@ def audio_length_validate(audio_path, just_len=False):
         return True
     return False
 
-
-
 if __name__ == '__main__':
 
     audio_files = os.listdir(os.path.abspath('audio'))
@@ -342,13 +342,37 @@ if __name__ == '__main__':
         # audio_path = os.path.abspath('audio/' + audio)
         print('\r\n>>>!!!Working on audio >>>\'{}\'<<<!!!'.format(audio))
         participant_id = re.sub(r'_[0-9].m4a$', '', audio)
+
+        if len(sys.argv) == 1 or not sys.argv[1] == 'update':
+            result_files = os.listdir(os.path.abspath('result'))
+            search_pattern = audio + '.txt'
+            existed_result = [result for result in fnmatch.filter(os.listdir(os.path.abspath('result')), search_pattern)
+                              if os.path.isfile(os.path.join(os.path.abspath('result'), result))]
+            if existed_result:
+                print('   >>>result of !!!{}!!! is already existed, spring to the next one, '
+                      '\r\n   >>>if you want to update them, plz run this script with argument \'update\' e.g python bv_client.py update'.format(audio))
+                continue
+
         study_log_path = os.path.abspath('study_logs/' + participant_id + '.json')
+
+        try:
+            if not len(os.listdir(BV_Client.converted_segmented_audios_path)) == 0:
+                [os.remove(file) for file in os.listdir(BV_Client.converted_segmented_audios_path)]
+        except Exception as e:
+            print('   >>>cannot remove the temporary segmented audios:\r\n{}'.format(e))
+
         if audio_length_validate(audio_path):
-            bv_client = BV_Client(audio, audio_path, study_log_path).get_bv_analysis()
+            bv_client = BV_Client(audio, audio_path, study_log_path)
+            try:
+                bv_client.get_bv_analysis()
+            except Exception as e:
+                print(   '>>>Server Connection Error. Reconnecting...')
+                bv_client.get_bv_analysis()
+
             bv_client.get_mapping_evaluation()
         else:
             print('   >>>{} is being split into 20 min. long segments'.format(audio))
-            command = 'lib\\bin\\ffmpeg.exe -i {} -c copy -map 0 -loglevel panic -segment_time 1200 -f segment tmp\\segments_tmp\\{}_part_%03d.m4a' \
+            command = 'lib\\bin\\ffmpeg.exe -i {} -c copy -map 0 -loglevel panic -segment_time 1200 -f segment tmp\\segments_tmp\\{}_part_%01d.m4a' \
                 if platform.system() == 'Windows' else 'ffmpeg -i {} -c copy -map 0 -loglevel panic -segment_time 1200 -f segment tmp/segments_tmp/{}_%01d.m4a'
             command_query = command.format(audio_path, participant_id)
             raw_duration = subprocess.check_output(command_query, shell=True)
@@ -366,7 +390,6 @@ if __name__ == '__main__':
             created_in = datetime.datetime.now()
             f.write('--- result for {} generated in {} ---\r\n'.format(audio, created_in))
 
-
             incremented_table_data = None
             last_loop_index = len(segmented_audio_files) - 1
             for index, segmented_audio in enumerate(segmented_audio_files):
@@ -378,7 +401,14 @@ if __name__ == '__main__':
                       format(segmented_audio, round(init_start_time/1000/60, 2), round(init_end_time/1000/60, 2), audio))
                 f.write('\r\n   >>>!!!Result for segment {} ({} to {} Min.)of {}!!!\r\n'
                         .format(segmented_audio, round(init_start_time/1000/60, 2), round(init_end_time/1000/60, 2), audio))
-                bv_client = BV_Client(segmented_audio, segmented_audio_path, study_log_path).get_bv_analysis()
+                bv_client = BV_Client(segmented_audio, segmented_audio_path, study_log_path)
+
+                try:
+                    bv_client.get_bv_analysis()
+                except Exception as e:
+                    print('>>>Server Connection Error. Reconnecting...')
+                    bv_client.get_bv_analysis()
+
                 incremented_index, part_data, part_table = bv_client.get_mapping_evaluation(is_segmented=True, init_offset_index=init_offset_index,
                                                                init_start_time=init_start_time, init_end_time=init_end_time)
                 f.write(part_table)
@@ -404,3 +434,9 @@ if __name__ == '__main__':
                     f.write('\r\n   >>>!!!Combined Result for {}!!!\r\n'.format(audio))
                     f.write(combined_table)
                     f.close()
+
+            try:
+                if not len(os.listdir(BV_Client.converted_segmented_audios_path)) == 0:
+                    [os.remove(file) for file in os.listdir(BV_Client.converted_segmented_audios_path)]
+            except Exception as e:
+                print('   >>>cannot remove the temporary segmented audios:\r\n{}'.format(e))
